@@ -12,6 +12,7 @@ URL:            http://i3wm.org
 Source0:        http://i3wm.org/downloads/%{name}-%{version}.tar.bz2
 Source1:        %{name}-logo.svg
 Patch0:         0001-Show-qubes-domain-in-configurable-colored-borders.patch
+Patch1:         0002-gap-support.patch
 
 BuildRequires:  asciidoc
 BuildRequires:  bison
@@ -88,6 +89,7 @@ Asciidoc and doxygen generated documentations for %{name}.
 %prep
 %setup -q
 %patch0 -p1
+%patch1 -p1
 
 # Drop /usr/bin/env lines in those which will be installed to %%_bindir.
 find . -maxdepth 1 -type f -name "i3*" -exec sed -i -e '1s;^#!/usr/bin/env perl;#!/usr/bin/perl;' {} + -print

@@ -1,0 +1,320 @@
+diff -Naur i3-4.12/include/commands.h i3-4.12-gaps/include/commands.h
+--- i3-4.12/include/commands.h	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/include/commands.h	2017-06-09 22:54:02.307000000 +0000
+@@ -317,3 +317,9 @@
+  *
+  */
+ void cmd_debuglog(I3_CMD, const char *argument);
++
++/**
++ * Implementation of 'gap_size <width>'
++ *
++ */
++void cmd_gap_size(I3_CMD, char *width);
+diff -Naur i3-4.12/include/config_directives.h i3-4.12-gaps/include/config_directives.h
+--- i3-4.12/include/config_directives.h	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/include/config_directives.h	2017-06-09 22:53:00.679000000 +0000
+@@ -40,6 +40,7 @@
+ CFGFUN(font, const char *font);
+ CFGFUN(exec, const char *exectype, const char *no_startup_id, const char *command);
+ CFGFUN(for_window, const char *command);
++CFGFUN(gap_size, const long width);
+ CFGFUN(floating_minimum_size, const long width, const long height);
+ CFGFUN(floating_maximum_size, const long width, const long height);
+ CFGFUN(default_orientation, const char *orientation);
+diff -Naur i3-4.12/include/config.h i3-4.12-gaps/include/config.h
+--- i3-4.12/include/config.h	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/include/config.h	2017-06-09 22:53:00.681000000 +0000
+@@ -231,6 +231,9 @@
+ 
+     /* The number of currently parsed barconfigs */
+     int number_barconfigs;
++
++    /* useless gap size */
++    int gap_size;
+ };
+ 
+ /**
+diff -Naur i3-4.12/include/render.h i3-4.12-gaps/include/render.h
+--- i3-4.12/include/render.h	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/include/render.h	2017-06-09 22:53:00.683000000 +0000
+@@ -35,7 +35,7 @@
+  * updated in X11.
+  *
+  */
+-void render_con(Con *con, bool render_fullscreen);
++void render_con(Con *con, bool render_fullscreen, bool already_inset);
+ 
+ /*
+  * Returns the height for the decorations
+diff -Naur i3-4.12/parser-specs/commands.spec i3-4.12-gaps/parser-specs/commands.spec
+--- i3-4.12/parser-specs/commands.spec	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/parser-specs/commands.spec	2017-06-09 22:53:00.687000000 +0000
+@@ -41,6 +41,7 @@
+   'title_format' -> TITLE_FORMAT
+   'mode' -> MODE
+   'bar' -> BAR
++  'gap_size' -> GAP_SIZE
+ 
+ state CRITERIA:
+   ctype = 'class'       -> CRITERION
+@@ -90,6 +91,11 @@
+   border_style = '1pixel'
+     -> call cmd_border($border_style, 1)
+ 
++# gap_size <size>
++state GAP_SIZE:
++  width = word
++      -> call cmd_gap_size($width)
++
+ state BORDER_WIDTH:
+   end
+     -> call cmd_border($border_style, 2)
+diff -Naur i3-4.12/parser-specs/config.spec i3-4.12-gaps/parser-specs/config.spec
+--- i3-4.12/parser-specs/config.spec	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/parser-specs/config.spec	2017-06-09 22:53:00.688000000 +0000
+@@ -22,6 +22,7 @@
+   'bar'                                    -> BARBRACE
+   'font'                                   -> FONT
+   'mode'                                   -> MODENAME
++  'gap_size'                               -> GAP_SIZE
+   'floating_minimum_size'                  -> FLOATING_MINIMUM_SIZE_WIDTH
+   'floating_maximum_size'                  -> FLOATING_MAXIMUM_SIZE_WIDTH
+   'floating_modifier'                      -> FLOATING_MODIFIER
+@@ -56,6 +57,11 @@
+   line
+       -> INITIAL
+ 
++# gap_size <size>
++state GAP_SIZE:
++  width = number
++      -> call cfg_gap_size(&width)
++
+ # floating_minimum_size <width> x <height>
+ state FLOATING_MINIMUM_SIZE_WIDTH:
+   width = number
+diff -Naur i3-4.12/src/commands.c i3-4.12-gaps/src/commands.c
+--- i3-4.12/src/commands.c	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/src/commands.c	2017-06-09 22:53:00.689000000 +0000
+@@ -822,7 +822,7 @@
+     // is not executed yet and will be batched with append_layout’s
+     // needs_tree_render after the parser finished. We should check if that is
+     // necessary at all.
+-    render_con(croot, false);
++    render_con(croot, false, false);
+ 
+     restore_open_placeholder_windows(parent);
+ 
+@@ -2123,3 +2123,14 @@
+     // XXX: default reply for now, make this a better reply
+     ysuccess(true);
+ }
++
++/**
++ * Implementation of 'gap_size <width>'
++ *
++ */
++
++void cmd_gap_size(I3_CMD, char *width) {
++    int px = atoi(width);
++
++    config.gap_size = px;
++}
+diff -Naur i3-4.12/src/config.c i3-4.12-gaps/src/config.c
+--- i3-4.12/src/config.c	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/src/config.c	2017-06-09 22:53:00.690000000 +0000
+@@ -230,6 +230,9 @@
+     /* Set default_orientation to NO_ORIENTATION for auto orientation. */
+     config.default_orientation = NO_ORIENTATION;
+ 
++    /* default useless gaps width */
++    config.gap_size = 0;
++
+     /* Set default urgency reset delay to 500ms */
+     if (config.workspace_urgency_timer == 0)
+         config.workspace_urgency_timer = 0.5;
+diff -Naur i3-4.12/src/config_directives.c i3-4.12-gaps/src/config_directives.c
+--- i3-4.12/src/config_directives.c	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/src/config_directives.c	2017-06-09 22:53:00.690000000 +0000
+@@ -158,6 +158,10 @@
+     TAILQ_INSERT_TAIL(&assignments, assignment, assignments);
+ }
+ 
++CFGFUN(gap_size, const long width) {
++    config.gap_size = width;
++}
++
+ CFGFUN(floating_minimum_size, const long width, const long height) {
+     config.floating_minimum_width = width;
+     config.floating_minimum_height = height;
+diff -Naur i3-4.12/src/floating.c i3-4.12-gaps/src/floating.c
+--- i3-4.12/src/floating.c	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/src/floating.c	2017-06-09 22:53:00.692000000 +0000
+@@ -279,8 +279,8 @@
+     TAILQ_INSERT_TAIL(&(nc->focus_head), con, focused);
+ 
+     /* render the cons to get initial window_rect correct */
+-    render_con(nc, false);
+-    render_con(con, false);
++    render_con(nc, false, true);
++    render_con(con, false, true);
+ 
+     if (set_focus)
+         con_focus(con);
+@@ -467,7 +467,7 @@
+     con->rect.x = old_rect->x + (new_x - event->root_x);
+     con->rect.y = old_rect->y + (new_y - event->root_y);
+ 
+-    render_con(con, false);
++    render_con(con, false, true);
+     x_push_node(con);
+     xcb_flush(conn);
+ 
+diff -Naur i3-4.12/src/manage.c i3-4.12-gaps/src/manage.c
+--- i3-4.12/src/manage.c	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/src/manage.c	2017-06-09 22:53:00.693000000 +0000
+@@ -552,13 +552,16 @@
+          * workspace at all. However, just calling render_con() on the
+          * workspace isn’t enough either — it needs the rect. */
+         ws->rect = ws->parent->rect;
+-        render_con(ws, true);
++
++        render_con(ws, true, false);
++
+         /* Disable setting focus, otherwise we’d move focus to an invisible
+          * workspace, which we generally prevent (e.g. in
+          * con_move_to_workspace). */
+         set_focus = false;
++
+     }
+-    render_con(croot, false);
++    render_con(croot, false, false);
+ 
+     /* Send an event about window creation */
+     ipc_send_window_event("new", nc);
+diff -Naur i3-4.12/src/randr.c i3-4.12-gaps/src/randr.c
+--- i3-4.12/src/randr.c	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/src/randr.c	2017-06-09 22:53:00.693000000 +0000
+@@ -406,7 +406,7 @@
+          * Then, we need to work with the "content" container, since we cannot
+          * be sure that the workspace itself was rendered at all (in case it’s
+          * invisible, it won’t be rendered). */
+-        render_con(workspace_out, false);
++        render_con(workspace_out, false, true);
+         Con *ws_out_content = output_get_content(workspace_out);
+ 
+         Con *floating_con;
+diff -Naur i3-4.12/src/render.c i3-4.12-gaps/src/render.c
+--- i3-4.12/src/render.c	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/src/render.c	2017-06-09 23:17:57.866000000 +0000
+@@ -39,7 +39,7 @@
+  * updated in X11.
+  *
+  */
+-void render_con(Con *con, bool render_fullscreen) {
++void render_con(Con *con, bool render_fullscreen, bool already_inset) {
+     render_params params = {
+         .rect = con->rect,
+         .x = con->rect.x,
+@@ -53,6 +53,26 @@
+     int i = 0;
+     con->mapped = true;
+ 
++    bool should_inset = ((con_is_leaf(con) ||
++                          (params.children > 0 &&
++                           (con->layout == L_STACKED ||
++                            con->layout == L_TABBED))) &&
++                         con->type != CT_FLOATING_CON &&
++                         con->type != CT_WORKSPACE);
++    if ((!already_inset && should_inset)) {
++        Rect inset = (Rect) {config.gap_size, config.gap_size,
++            config.gap_size * -2, config.gap_size * -2};
++        params.rect = rect_add(params.rect, inset);
++        if (!render_fullscreen) {
++            con->rect = rect_add(con->rect, inset);
++            if (con->window) {
++                con->window_rect = rect_add(con->window_rect, inset);
++            }
++        }
++        inset.height = config.gap_size * -1;
++        con->deco_rect = rect_add(con->deco_rect, inset);
++    }
++
+     /* if this container contains a window, set the coordinates */
+     if (con->window) {
+         /* depending on the border style, the rect of the child window
+@@ -112,7 +132,7 @@
+     if (fullscreen) {
+         fullscreen->rect = params.rect;
+         x_raise_con(fullscreen);
+-        render_con(fullscreen, true);
++        render_con(fullscreen, true, false);
+         /* Fullscreen containers are either global (underneath the CT_ROOT
+          * container) or per-output (underneath the CT_CONTENT container). For
+          * global fullscreen containers, we cannot abort rendering here yet,
+@@ -155,7 +175,7 @@
+             DLOG("child at (%d, %d) with (%d x %d)\n",
+                  child->rect.x, child->rect.y, child->rect.width, child->rect.height);
+             x_raise_con(child);
+-            render_con(child, false);
++            render_con(child, false, should_inset || already_inset);
+             i++;
+         }
+ 
+@@ -168,7 +188,7 @@
+              * that we have a non-leaf-container inside the stack. In that
+              * case, the children of the non-leaf-container need to be raised
+              * aswell. */
+-                render_con(child, false);
++                render_con(child, false, true);
+             }
+ 
+             if (params.children != 1)
+@@ -215,7 +235,7 @@
+     Con *output;
+     if (!fullscreen) {
+         TAILQ_FOREACH(output, &(con->nodes_head), nodes) {
+-            render_con(output, false);
++            render_con(output, false, false);
+         }
+     }
+ 
+@@ -284,7 +304,7 @@
+             DLOG("floating child at (%d,%d) with %d x %d\n",
+                  child->rect.x, child->rect.y, child->rect.width, child->rect.height);
+             x_raise_con(child);
+-            render_con(child, false);
++            render_con(child, false, true);
+         }
+     }
+ }
+@@ -334,7 +354,7 @@
+     if (fullscreen) {
+         fullscreen->rect = con->rect;
+         x_raise_con(fullscreen);
+-        render_con(fullscreen, true);
++        render_con(fullscreen, true, false);
+         return;
+     }
+ 
+@@ -374,7 +394,7 @@
+         DLOG("child at (%d, %d) with (%d x %d)\n",
+              child->rect.x, child->rect.y, child->rect.width, child->rect.height);
+         x_raise_con(child);
+-        render_con(child, false);
++        render_con(child, false, child->type == CT_DOCKAREA);
+     }
+ }
+ 
+diff -Naur i3-4.12/src/tree.c i3-4.12-gaps/src/tree.c
+--- i3-4.12/src/tree.c	2016-03-06 15:17:18.000000000 +0000
++++ i3-4.12-gaps/src/tree.c	2017-06-09 22:53:00.694000000 +0000
+@@ -499,7 +499,7 @@
+     mark_unmapped(croot);
+     croot->mapped = true;
+ 
+-    render_con(croot, false);
++    render_con(croot, false, false);
+ 
+     x_push_changes(croot);
+     DLOG("-- END RENDERING --\n");
